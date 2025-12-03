@@ -268,8 +268,9 @@ st.markdown("---")
 
 if st.button("▶️ Genera il Radiogiornale Quotidiano", type="primary"):
     
-    if 'GEMINI_API_KEY' not in st.session_state or not GEMINI_API_KEY:
-        st.error("Impossibile procedere. La chiave GEMINI_API_KEY è mancante.")
+    # CHECK CORRETTO: Basta verificare se la variabile GEMINI_API_KEY ha un valore
+    if not GEMINI_API_KEY:
+        st.error("Impossibile procedere. La chiave GEMINI_API_KEY è mancante o non è stata caricata.")
         st.stop()
         
     # Placeholder per visualizzare i log di debug in tempo reale
@@ -336,4 +337,5 @@ if st.button("▶️ Genera il Radiogiornale Quotidiano", type="primary"):
     else:
         # Se final_digest è None, significa che c'è stato un problema nella sintesi o nella raccolta
         pass
+
 
