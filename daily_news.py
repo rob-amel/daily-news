@@ -5,8 +5,6 @@ from datetime import datetime, timedelta
 from google import genai
 from google.genai import types
 from google.genai.errors import APIError
-
-# --- IMPORT NECESSARI PER L'AUDIO ---
 from gtts import gTTS
 from io import BytesIO
 
@@ -27,10 +25,10 @@ final_digest = None
 # ----------------------------------------------------------------------
 # --- 📍 MAPPAZIONE IBRIDA DI TUTTE LE FONTI E QUERIES ---
 
-# 1. RSS: Questi sono i feed che proviamo a leggere prima (se funzionano)
+# 1. RSS: Questi sono i feed che proviamo a leggere prima (base)
 RSS_FEED_URLS = [
     "https://www.lorientlejour.com/rss/all.xml",
-    "https://www.aljazeera.com/xml/rss/all.xml", # Funziona, da usare!
+    "https://www.aljazeera.com/xml/rss/all.xml", 
     "https://www.middleeasteye.net/rss/all",
     "https://www.al-monitor.com/rss/news.xml", 
     "https://www.orientxxi.info/public/backend.php?lang=it",
@@ -41,7 +39,6 @@ RSS_FEED_URLS = [
 ]
 
 # 2. RICERCA MIRATA (per i siti che non hanno RSS affidabili)
-# Questi domini verranno usati per le ricerche Google mirate (site:dominio.com)
 SEARCH_DOMAINS = [
     "lorientlejour.com",
     "middleeasteye.net",
@@ -51,7 +48,6 @@ SEARCH_DOMAINS = [
     "domani.it",
     "espresso.repubblica.it",
     "internazionale.it"
-    # Al Jazeera e altri che funzionano bene via RSS non sono qui.
 ]
 
 # 3. Sezioni del digest con le parole chiave di ricerca
@@ -62,6 +58,14 @@ SECTIONS_MAPPING = {
     "Italia (Politica Interna)": "Governo Italia OR Legge Bilancio OR Elezioni Italia", 
     "Mondo (Principali)": "Notizie Principali Globali OR Crisi Internazionali"
 }
+
+# Genera le query di ricerca da passare a Gemini
+SEARCH_QUERIES_TO_RUN = []
+for section, keywords in SECTIONS_MAPPING.items():
+    for domain in SEARCH_DOMAINS:
+        # Ricerca mirata: "[parole chiave] site:dominio.com"
+        SEARCH_QUERIES_TO_RUN.append(f"{keywords} site:{domain}")
+        
 # ----------------------------------------------------------------------
 
 
@@ -71,13 +75,13 @@ SECTIONS_MAPPING = {
 
 def get_articles_via_rss(status_placeholder):
     """
-    Tenta di leggere TUTTI i feed RSS e raccoglie gli articoli recenti (ultime 48h).
+    Legge TUTTI i feed RSS e raccoglie gli articoli recenti (ultime 48h).
     """
     articles = []
-    # Usiamo 48 ore come rilassamento base, dato che hai escluso 24 ore.
+    # Usiamo 48 ore come rilassamento base
     yesterday = datetime.now() - timedelta(hours=48) 
     
-    status_placeholder.info("🔎 Fase 1/2: Tentativo di raccolta da tutti i feed RSS...")
+    status_placeholder.info("🔎 Tentativo di raccolta da tutti i feed RSS (ultime 48h)...")
 
     for url in RSS_FEED_URLS:
         try:
@@ -103,95 +107,29 @@ def get_articles_via_rss(status_placeholder):
                     })
                     recent_count += 1
             
-            # Solo log per i feed che danno risultati
             if recent_count > 0:
                  status_placeholder.markdown(f"&nbsp;&nbsp;✅ Trovati **{recent_count}** articoli da **{source}** (via RSS).")
 
-        except Exception as e:
-            status_placeholder.warning(f"❌ Errore/Fallimento RSS per {url}: {e}")
+        except Exception:
+            # Non mostriamo warning per ogni singolo feed che fallisce, per non sovraccaricare l'utente
             continue
 
+    total_articles = len(articles)
+    if total_articles == 0:
+        status_placeholder.warning("⚠️ **ATTENZIONE:** Nessun articolo recente trovato via RSS. La sintesi dipenderà interamente dalla ricerca AI.")
+    else:
+        status_placeholder.success(f"✔️ Raccolta RSS completata: Totale **{total_articles}** articoli.")
+        
     return articles
 
-def get_articles_via_search(rss_articles, status_placeholder):
-    """
-    Esegue query Google Search mirate (site:dominio.com) per integrare i dati mancanti.
-    """
-    
-    status_placeholder.info("🌐 Fase 2/2: Integrazione con Google Search mirata per le sezioni...")
-    
-    # Crea un set di tutti i link trovati via RSS per evitare duplicati
-    existing_urls = {a['url'] for a in rss_articles}
-    
-    # Inizializza la lista degli articoli finali con quelli già trovati via RSS
-    final_articles = rss_articles.copy()
-
-    for section, keywords in SECTIONS_MAPPING.items():
-        search_queries = []
-        
-        # Genera query per ogni dominio e per la sezione corrente
-        for domain in SEARCH_DOMAINS:
-            # Ricerca mirata: "[parole chiave] site:dominio.com"
-            search_queries.append(f"{keywords} site:{domain}")
-        
-        # Esegui la ricerca
-        try:
-            # Chiamata allo strumento di ricerca Google
-            search_results = google:search.search(queries=search_queries)
-
-            # Processa i risultati della ricerca
-            if search_results and search_results.result:
-                # Il risultato è una stringa JSON di risultati
-                results = json.loads(search_results.result)
-                search_count = 0
-                
-                for result in results:
-                    url = result.get('url')
-                    if url and url not in existing_urls:
-                        # Estrai la fonte dal dominio
-                        source_name = result.get('source', url.split('/')[2])
-                        
-                        final_articles.append({
-                            'title': result.get('title'),
-                            'description': result.get('snippet', ''),
-                            'url': url,
-                            'source': source_name,
-                            'method': 'Search'
-                        })
-                        existing_urls.add(url)
-                        search_count += 1
-
-                if search_count > 0:
-                    status_placeholder.markdown(f"&nbsp;&nbsp;⭐ Aggiunti **{search_count}** articoli per la sezione **{section}** (via Search).")
-
-        except Exception as e:
-            status_placeholder.error(f"❌ Errore durante la ricerca Google per la sezione {section}: {e}")
-            
-    return final_articles
-
-# La funzione run_news_collection ora è il punto di ingresso per il processo ibrido
+# run_news_collection ora chiama solo l'RSS, la parte Search è nel Prompt/Gemini
 def run_news_collection(status_placeholder):
-    
-    # 1. Raccolta via RSS (Base)
-    rss_articles = get_articles_via_rss(status_placeholder)
-    
-    # 2. Raccolta/Integrazione via Search (Supplementare)
-    all_articles = get_articles_via_search(rss_articles, status_placeholder)
-    
-    total_articles = len(all_articles)
-
-    if total_articles == 0:
-        status_placeholder.error("⚠️ **FALLIMENTO TOTALE:** Nessun articolo trovato né via RSS né tramite ricerca mirata.")
-        return []
-    else:
-        status_placeholder.success(f"✔️ Raccolta completata: Totale **{total_articles}** articoli per la sintesi.")
-
-    return all_articles
+    return get_articles_via_rss(status_placeholder)
 
 
-def summarize_with_gemini(all_articles, status_placeholder):
+def summarize_with_gemini(rss_articles, search_queries, status_placeholder):
     """
-    Invia TUTTI i dati grezzi a Gemini per filtrare, sintetizzare e strutturare.
+    Invia gli articoli RSS e le query di ricerca a Gemini per filtrare, cercare e sintetizzare.
     """
     
     # --- 1. CONFIGURAZIONE CLIENTE ---
@@ -202,12 +140,9 @@ def summarize_with_gemini(all_articles, status_placeholder):
 
     # --- 2. PREPARAZIONE DATI GREZZI E CONTROLLO ---
     
-    # Dati grezzi come lista JSON per un input più pulito a Gemini
-    formatted_input_json = json.dumps(all_articles, indent=2)
-    
-    if not all_articles:
-        return None 
-        
+    # Dati grezzi RSS come lista JSON
+    formatted_rss_json = json.dumps(rss_articles, indent=2)
+
     # --- 3. DEFINIZIONE DELLO SCHEMA JSON (Output TTS) ---
     final_digest_schema = types.Schema(
         type=types.Type.OBJECT,
@@ -230,29 +165,42 @@ def summarize_with_gemini(all_articles, status_placeholder):
 
     system_instruction = f"""
     Sei un giornalista radiofonico professionista e molto dettagliato. Il tuo compito è creare lo script per un radiogiornale.
-    Hai una lista unica di articoli grezzi da diverse fonti. Devi **filtrare e sintetizzare** gli articoli rilevanti per ciascuna delle seguenti sezioni e presentarle in questo ordine: {sections_list}.
     
-    **È FONDAMENTALE che lo script sia descrittivo e approfondito per raggiungere una lunghezza minima di 750 parole totali, equivalente a circa 5 minuti di parlato.**
-    Utilizza un tono neutro e informativo. Inizia con una breve introduzione e concludi con una chiusura.
-    NON USARE titoli Markdown (#, ##, ***) o elenchi puntati (*, -). Il testo deve essere narrativo e fluido.
+    **TASK:**
+    1. **ANALIZZA** gli articoli forniti tramite RSS.
+    2. **ESEGUI** la ricerca utilizzando lo strumento Google Search Tool con le query fornite per trovare contenuti aggiuntivi e più specifici (ricerca mirata per dominio).
+    3. **COMBINA** le informazioni trovate tramite RSS e Google Search.
+    4. **FILTRA** e **SINTETIZZA** le informazioni rilevanti per ciascuna delle seguenti sezioni, presentandole in questo ordine: {sections_list}.
+    
+    **REQUISITI:**
+    * **LUNGHEZZA:** Lo script deve essere descrittivo e approfondito per raggiungere una lunghezza minima di 750 parole totali (circa 5 minuti di parlato).
+    * **TONO:** Neutro e informativo.
+    * **FORMATO:** Inizia con una breve introduzione e concludi con una chiusura. NON USARE titoli Markdown o elenchi puntati. Il testo deve essere narrativo e fluido.
     """
     
     config = types.GenerateContentConfig(
         system_instruction=system_instruction,
         response_mime_type="application/json",
         response_schema=final_digest_schema,
+        # Abilita lo strumento di ricerca per permettere a Gemini di eseguire le query
+        tools=[{"google:search": {}}] 
     )
 
     prompt = f"""
-    Genera lo script TTS (Text-to-Speech) basandoti SOLO ed ESCLUSIVAMENTE sui seguenti articoli grezzi, filtrando per le sezioni richieste:
+    Genera lo script TTS (Text-to-Speech) basandoti sui dati combinati di RSS e ricerca.
     
-    ARTICOLI GREZZI TOTALI (Formato JSON):
+    ARTICOLI RSS TROVATI (Base dati iniziale, Formato JSON):
     ---
-    {formatted_input_json}
+    {formatted_rss_json}
+    ---
+    
+    QUERY DI RICERCA DA ESEGUIRE PER L'INTEGRAZIONE (Da usare con Google Search Tool):
+    ---
+    {json.dumps(SEARCH_QUERIES_TO_RUN, indent=2)}
     ---
     """
     
-    status_placeholder.info("🧠 Avvio sintesi con Gemini AI. Richiesto script lungo circa 5 minuti...")
+    status_placeholder.info("🧠 Avvio sintesi con Gemini AI. Richiesta integrazione ricerca e script di 5 minuti...")
 
     # --- 5. CHIAMATA ALL'API ---
     try:
@@ -261,9 +209,9 @@ def summarize_with_gemini(all_articles, status_placeholder):
             contents=prompt,
             config=config,
         )
-
+        
+        # Pulizia e decodifica del JSON
         json_string = response.text.strip()
-        # Pulizia del JSON
         if json_string.startswith("```json"):
             json_string = json_string[7:]
         if json_string.endswith("```"):
@@ -295,7 +243,7 @@ st.markdown("---")
 st.markdown("""
 **Ciao! Lino Bandi ti aiuta a preparare lo script del tuo radiogiornale.**
 
-Il sistema ora utilizza una **logica ibrida**: prova i feed RSS (più puliti) e li integra con una ricerca mirata Google (**Search Tool**) sui domini specifici per massimizzare la copertura.
+Il sistema ora usa una logica **Ibrida Corretta**: legge i feed RSS (base) e chiede a **Gemini** di eseguire ricerche mirate (`site:`) per integrare la copertura sui domini da te scelti.
 """)
 
 st.info("""
@@ -315,14 +263,11 @@ if st.button("▶️ Genera il Radiogiornale Quotidiano", type="primary"):
     # Placeholder per visualizzare i log di debug in tempo reale
     status_container = st.container()
     
-    # 1. RACCOLTA DATI GREZZI (Ibrida)
-    all_articles = run_news_collection(status_container)
+    # 1. RACCOLTA DATI GREZZI (RSS)
+    rss_articles = run_news_collection(status_container)
     
-    # 2. SINTESI CON GEMINI
-    final_digest = summarize_with_gemini(all_articles, status_container)
-    
-    # Pulizia del container di stato al termine
-    # Lasciamo qui i messaggi finali di successo/fallimento della raccolta (Punto 1)
+    # 2. SINTESI CON GEMINI (Invia gli articoli RSS e le query di ricerca)
+    final_digest = summarize_with_gemini(rss_articles, SEARCH_QUERIES_TO_RUN, status_container)
     
     # 3. VISUALIZZAZIONE DEL RISULTATO
     if final_digest:
@@ -376,5 +321,5 @@ if st.button("▶️ Genera il Radiogiornale Quotidiano", type="primary"):
         
         st.markdown("---")
     else:
-        # Se final_digest è None, significa che c'è stato un problema nella sintesi o nella raccolta (già segnalato)
+        # Se final_digest è None, significa che c'è stato un problema nella sintesi o nella raccolta
         pass
