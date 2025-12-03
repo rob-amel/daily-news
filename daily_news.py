@@ -5,6 +5,13 @@ from datetime import datetime, timedelta
 from google import genai
 from google.genai import types
 from google.genai.errors import APIError
+import streamlit as st
+import feedparser
+# ... altri import ...
+
+# --- CORREZIONE: Inizializzazione della variabile (QUESTA RIGA È NECESSARIA!) ---
+final_digest = None 
+# ----------------------------------------------------------------------------------
 
 # --- CONFIGURAZIONE E STILE ---
 
@@ -335,3 +342,4 @@ if final_digest:
 
 else:
     pass
+
