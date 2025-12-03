@@ -198,11 +198,10 @@ def summarize_with_gemini(rss_articles, search_queries, status_placeholder):
     
     config = types.GenerateContentConfig(
         system_instruction=system_instruction,
-        response_mime_type="application/json",
-        response_schema=final_digest_schema,
+        # RIMOSSO: response_mime_type="application/json"
+        # RIMOSSO: response_schema=final_digest_schema
         tools=[search_tool] 
     )
-
     prompt = f"""
     Genera lo script TTS (Text-to-Speech) basandoti sui dati combinati di RSS e ricerca.
     
@@ -345,3 +344,4 @@ if st.button("▶️ Genera il Radiogiornale Quotidiano", type="primary"):
     else:
         # Se final_digest è None, significa che c'è stato un problema nella sintesi o nella raccolta
         pass
+
