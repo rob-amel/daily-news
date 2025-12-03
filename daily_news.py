@@ -5,53 +5,45 @@ from datetime import datetime, timedelta
 from google import genai
 from google.genai import types
 from google.genai.errors import APIError
-import streamlit as st
-import feedparser
-# ... altri import ...
-
-# --- CORREZIONE: Inizializzazione della variabile (QUESTA RIGA È NECESSARIA!) ---
-final_digest = None 
-# ----------------------------------------------------------------------------------
 
 # --- CONFIGURAZIONE E STILE ---
 
 st.set_page_config(page_title="🌍 Daily News Digest AI", layout="centered")
 
-# --- RECUPERO CHIAVE GEMINI ---
+# --- RECUPERO CHIAVE GEMINI E INIZIALIZZAZIONE VARIABILI ---
 try:
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 except KeyError:
     st.error("⚠️ Chiave GEMINI_API_KEY non trovata nei secrets. L'API di sintesi fallirà.")
 
-# ----------------------------------------------------------------------
-# --- 📍 MAPPAZIONE FISSA DELLE FONTI RSS ---
-# Nota: Questi sono feed RSS generali. La specificità (Libano/Gaza) dipende dalla presenza
-# di articoli recenti in questi feed e dalla capacità di Gemini di filtrarli.
-# La sezione "Fonti Personalizzate" è stata riutilizzata per la mappatura fissa.
+# Inizializzazione della variabile per evitare NameError
+final_digest = None 
 
-FEED_MAPPING = {
-    "Libano": [
-        "https://www.lorientlejour.com/rss/all.xml", 
-        "https://www.aljazeera.com/xml/rss/all.xml"
-    ],
-    "Gaza": [
-        "https://www.middleeasteye.net/rss/all", 
-        "https://www.aljazeera.com/xml/rss/all.xml"
-    ],
-    "Medio Oriente (Siria, Palestina)": [
-        "https://www.al-monitor.com/rss/news.xml", 
-        "https://www.orientxxi.info/public/backend.php?lang=it",
-    ],
-    "Italia (Politica Interna)": [
-        "https://rss.ilmanifesto.it/ilmanifesto.xml", 
-        "https://www.domani.it/rss", 
-        "https://espresso.repubblica.it/rss.xml" 
-    ],
-    "Mondo (Principali)": [
-        "https://www.internazionale.it/rss", 
-        "https://www.aljazeera.com/xml/rss/all.xml"
-    ]
-}
+
+# ----------------------------------------------------------------------
+# --- 📍 MAPPAZIONE UNICA DI TUTTE LE FONTI RSS ---
+# Tutti i feed sono raccolti in una lista unica. Sarà Gemini a filtrare per argomento.
+
+ALL_FEED_URLS = [
+    "https://www.lorientlejour.com/rss/all.xml",
+    "https://www.aljazeera.com/xml/rss/all.xml",
+    "https://www.middleeasteye.net/rss/all",
+    "https://www.al-monitor.com/rss/news.xml", 
+    "https://www.orientxxi.info/public/backend.php?lang=it",
+    "https://rss.ilmanifesto.it/ilmanifesto.xml", 
+    "https://www.domani.it/rss", 
+    "https://espresso.repubblica.it/rss.xml",
+    "https://www.internazionale.it/rss"
+]
+
+# Definiamo l'ordine e il focus delle sezioni per il prompt a Gemini
+SECTIONS_ORDER = [
+    "Libano", 
+    "Gaza", 
+    "Medio Oriente (Siria, Palestina)", 
+    "Italia (Politica Interna)", 
+    "Mondo (Principali)"
+]
 # ----------------------------------------------------------------------
 
 
@@ -59,27 +51,23 @@ FEED_MAPPING = {
 # --------------------- FUNZIONI DI GESTIONE DATI ----------------------
 # ----------------------------------------------------------------------
 
-def get_news_from_rss(section_name, status_placeholder):
+def get_all_news_from_rss(status_placeholder):
     """
-    Legge tutti i feed RSS per una sezione data e raccoglie gli articoli recenti.
-    Aggiunto status_placeholder per il debug in tempo reale.
+    Legge TUTTI i feed RSS e raccoglie tutti gli articoli recenti in una singola lista.
     """
     articles = []
-    feed_list = FEED_MAPPING.get(section_name, [])
     yesterday = datetime.now() - timedelta(hours=24)
+    total_recent_articles = 0
     
-    # Aggiorna lo stato: Inizio scansione sezione
-    status_placeholder.info(f"🔎 Avvio scansione feed per la sezione: **{section_name}**")
+    status_placeholder.info("🔎 Avvio scansione di TUTTI i feed RSS specificati...")
 
-    for url in feed_list:
+    for url in ALL_FEED_URLS:
         try:
             feed = feedparser.parse(url)
             source = feed.feed.title if hasattr(feed.feed, 'title') else url.split('/')[2]
             
-            # Aggiorna lo stato: Scansione sito
             status_placeholder.markdown(f"&nbsp;&nbsp;→ Scansione: **{source}** ({len(feed.entries)} articoli disponibili)")
             
-            # Contiamo gli articoli recenti trovati in questo feed
             recent_count = 0
             
             for entry in feed.entries:
@@ -91,6 +79,7 @@ def get_news_from_rss(section_name, status_placeholder):
 
                 if is_recent:
                     description = getattr(entry, 'summary', None) or getattr(entry, 'description', None) or ""
+                    
                     articles.append({
                         'title': entry.title,
                         'description': description,
@@ -99,43 +88,24 @@ def get_news_from_rss(section_name, status_placeholder):
                     })
                     recent_count += 1
             
-            # Aggiorna lo stato: Risultato del singolo sito
+            total_recent_articles += recent_count
             status_placeholder.markdown(f"&nbsp;&nbsp;✅ Trovati **{recent_count}** articoli recenti da **{source}**.")
             
         except Exception as e:
-            # Aggiorna lo stato: Errore del singolo sito
             status_placeholder.error(f"❌ Errore nella lettura del feed RSS {url} ({source}): {e}")
             continue
 
-    # Aggiorna lo stato: Totale della sezione
-    if len(articles) == 0:
-        status_placeholder.warning(f"⚠️ **ATTENZIONE:** Nessun articolo recente trovato per **{section_name}**.")
+    if total_recent_articles == 0:
+        status_placeholder.warning("⚠️ **ATTENZIONE:** Nessun articolo recente trovato in TUTTI i feed RSS. Impossibile generare il digest.")
     else:
-        status_placeholder.success(f"✔️ Raccolta completata per **{section_name}**: Totale **{len(articles)}** articoli.")
-
+        status_placeholder.success(f"✔️ Raccolta completata: Totale **{total_recent_articles}** articoli recenti da tutte le fonti.")
+        
     return articles
 
 
-def run_news_collection(status_placeholder):
+def summarize_with_gemini(all_articles, status_placeholder):
     """
-    Esegue la raccolta delle notizie da tutti i feed definiti.
-    """
-    raw_digest_data = []
-    sections_order = ["Libano", "Gaza", "Medio Oriente (Siria, Palestina)", 
-                      "Italia (Politica Interna)", "Mondo (Principali)"]
-    
-    for section_title in sections_order:
-        # Passiamo il placeholder allo step specifico di raccolta
-        articles = get_news_from_rss(section_title, status_placeholder) 
-        raw_digest_data.append({"section": section_title, "articles": articles})
-
-    return raw_digest_data
-
-
-def summarize_with_gemini(raw_digest_data, status_placeholder):
-    """
-    Invia i dati grezzi delle notizie a Gemini per sintetizzare in un unico script vocale.
-    Aumentato il requisito di lunghezza per uno script di 5 minuti.
+    Invia TUTTI i dati grezzi a Gemini per filtrare, sintetizzare e strutturare.
     """
     
     # --- 1. CONFIGURAZIONE CLIENTE ---
@@ -145,28 +115,13 @@ def summarize_with_gemini(raw_digest_data, status_placeholder):
         return None
 
     # --- 2. PREPARAZIONE DATI GREZZI E CONTROLLO ---
-    formatted_input = ""
-    total_articles = 0
     
-    for section_data in raw_digest_data:
-        section_title = section_data['section']
-        articles = section_data['articles']
-        total_articles += len(articles)
-        
-        # Aggiungiamo intestazioni chiare per la strutturazione da parte di Gemini
-        formatted_input += f"\n\n### SEZIONE: {section_title} ({len(articles)} ARTICOLI DA SINTETIZZARE)\n"
-        if not articles:
-            formatted_input += "NESSUNA NOTIZIA RECENTE TROVATA IN QUESTA SEZIONE.\n"
-            continue
-        
-        for i, article in enumerate(articles):
-            formatted_input += f"- Articolo {i+1} [Fonte: {article.get('source', 'Sconosciuta')}]: {article['title']}\n"
-            if article['description']:
-                formatted_input += f"  Descrizione: {article['description'][:500]}...\n"
-        
-    if total_articles == 0:
-        return None
+    # Dati grezzi come lista JSON per un input più pulito a Gemini
+    formatted_input_json = json.dumps(all_articles, indent=2)
 
+    if not all_articles:
+        return None # Già gestito in get_all_news_from_rss
+        
     # --- 3. DEFINIZIONE DELLO SCHEMA JSON (Output TTS) ---
     final_digest_schema = types.Schema(
         type=types.Type.OBJECT,
@@ -184,12 +139,15 @@ def summarize_with_gemini(raw_digest_data, status_placeholder):
     )
     
     # --- 4. PROMPT COMPLETO E CONFIGURAZIONE PER GEMINI ---
+    
+    sections_list = ", ".join(SECTIONS_ORDER)
 
     system_instruction = f"""
     Sei un giornalista radiofonico professionista e molto dettagliato. Il tuo compito è creare lo script per un radiogiornale.
-    Sintetizza i contenuti in un testo unico, scorrevole e narrativo, mantenendo il seguente ordine di importanza per le sezioni: Libano, Gaza, Medio Oriente, Italia, Mondo.
+    Hai una lista unica di articoli grezzi da diverse fonti. Devi **filtrare e sintetizzare** gli articoli rilevanti per ciascuna delle seguenti sezioni e presentarle in questo ordine: {sections_list}.
+    
     **È FONDAMENTALE che lo script sia descrittivo e approfondito per raggiungere una lunghezza minima di 750 parole totali, equivalente a circa 5 minuti di parlato.**
-    Utilizza un tono neutro e informativo. Inizia con una breve introduzione e concludi con una chiusura (es. "Benvenuti al digest di Lino Bandi..." e "Il digest di oggi termina qui.").
+    Utilizza un tono neutro e informativo. Inizia con una breve introduzione e concludi con una chiusura.
     NON USARE titoli Markdown (#, ##, ***) o elenchi puntati (*, -). Il testo deve essere narrativo e fluido.
     """
     
@@ -200,11 +158,11 @@ def summarize_with_gemini(raw_digest_data, status_placeholder):
     )
 
     prompt = f"""
-    Genera lo script TTS (Text-to-Speech) basandoti SOLO ed ESCLUSIVAMENTE sui seguenti articoli grezzi. 
+    Genera lo script TTS (Text-to-Speech) basandoti SOLO ed ESCLUSIVAMENTE sui seguenti articoli grezzi, filtrando per le sezioni richieste:
     
-    ARTICOLI GREZZI:
+    ARTICOLI GREZZI TOTALI (Formato JSON):
     ---
-    {formatted_input}
+    {formatted_input_json}
     ---
     """
     
@@ -237,6 +195,10 @@ def summarize_with_gemini(raw_digest_data, status_placeholder):
 # --------------------- INTERFACCIA STREAMLIT (Frontend) ---------------
 # ----------------------------------------------------------------------
 
+# --- IMPORT NECESSARI PER L'AUDIO ---
+from gtts import gTTS
+from io import BytesIO
+
 # --- LOGO E TITOLO ---
 col_icon, col_title = st.columns([0.5, 6.5]) 
 
@@ -251,11 +213,11 @@ st.markdown("---")
 st.markdown("""
 **Ciao! Lino Bandi ti aiuta a preparare lo script del tuo radiogiornale.**
 
-Le fonti utilizzate sono: **Al Jazeera, Middle East Eye, Al Monitor, L'Orient Le Jour, Orient XXI, L'Espresso, Il Manifesto, Domani, Internazionale.**
+Il sistema ora utilizza **tutte le fonti specificate** per ogni singola sezione, chiedendo a Gemini di filtrare in modo intelligente.
 """)
 
 st.info("""
-Lo script finale è ottimizzato per una durata di circa **5 minuti** di parlato e utilizza i flussi RSS (legali) dei siti da te scelti.
+Lo script finale è ottimizzato per una durata di circa **5 minuti** di parlato e include la riproduzione audio automatica.
 """)
 st.markdown("---")
 
@@ -271,75 +233,67 @@ if st.button("▶️ Genera il Radiogiornale Quotidiano", type="primary"):
     # Placeholder per visualizzare i log di debug in tempo reale
     status_container = st.container()
     
-    status_container.info("Inizio processo: Raccolta dati...")
-    
     # 1. RACCOLTA DATI GREZZI (solo da RSS)
-    raw_news_data = run_news_collection(status_container)
+    all_articles = get_all_news_from_rss(status_container)
     
     # 2. SINTESI CON GEMINI
-    final_digest = summarize_with_gemini(raw_news_data, status_container)
+    final_digest = summarize_with_gemini(all_articles, status_container)
     
     # Pulizia del container di stato al termine
     status_container.empty()
     
     # 3. VISUALIZZAZIONE DEL RISULTATO
-if final_digest:
-    st.success("✅ Script del radiogiornale generato con successo!")
+    if final_digest:
+        st.success("✅ Script del radiogiornale generato con successo!")
+        
+        titolo = final_digest.get('titolo_digest', 'Il Tuo Digest Quotidiano')
+        script_tts = final_digest.get('script_tts', 'Errore nella generazione dello script.')
+        
+        st.header(f"🎙️ {titolo}")
+        
+        st.markdown("---")
+        
+        # --- BLOCCO RIPRODUZIONE AUDIO ---
+        st.subheader("Ascolta il Digest")
+        
+        try:
+            # gTTS non ha bisogno di essere definita ogni volta, ma è il modo più semplice
+            tts = gTTS(
+                text=script_tts, 
+                lang='it', 
+                tld='com',
+                slow=False
+            )
+            
+            audio_fp = BytesIO()
+            tts.write_to_fp(audio_fp)
+            audio_fp.seek(0)
+            
+            st.audio(audio_fp, format='audio/mp3')
+            st.info("Riproduzione automatica avviata. Se non parte, premi play nel widget sopra.")
+            
+        except Exception as e:
+            st.error(f"Impossibile generare l'audio: {e}")
+            
+        # --- FINE BLOCCO AUDIO ---
 
-    titolo = final_digest.get('titolo_digest', 'Il Tuo Digest Quotidiano')
-    script_tts = final_digest.get('script_tts', 'Errore nella generazione dello script.')
-
-    st.header(f"🎙️ {titolo}")
-
-    st.markdown("---")
-
-    # --- BLOCCO AGGIUNTO PER LA RIPRODUZIONE AUDIO ---
-    st.subheader("Ascolta il Digest")
-
-    try:
-        tts = gTTS(
-            text=script_tts, 
-            lang='it', 
-            tld='com', # Usa 'com' o 'it' a seconda della qualità della voce
-            slow=False
+        st.markdown("""
+        ---
+        #### Script Completo (per riferimento)
+        """)
+        
+        # Stampa il conteggio delle parole
+        word_count = len(script_tts.split())
+        st.markdown(f"*(Lunghezza stimata: **{word_count} parole** — circa {round(word_count / 150, 1)} minuti di parlato)*")
+        
+        # Mostra lo script
+        st.text_area(
+            "Script del radiogiornale", 
+            script_tts, 
+            height=300,
         )
-
-        # Salvataggio dell'audio in memoria
-        audio_fp = BytesIO()
-        tts.write_to_fp(audio_fp)
-
-        # Reset del puntatore prima di leggere il contenuto
-        audio_fp.seek(0)
-
-        # Widget di riproduzione audio di Streamlit
-        st.audio(audio_fp, format='audio/mp3')
-
-        st.info("Riproduzione automatica avviata. Se non parte, premi play nel widget sopra.")
-
-    except Exception as e:
-        st.error(f"Impossibile generare l'audio: {e}")
-        st.warning("Verifica la connessione internet o i requisiti di gTTS.")
-
-    # --- FINE BLOCCO AUDIO ---
-
-    st.markdown("""
-    ---
-    #### Script Completo (per riferimento)
-    """)
-
-    # Stampa il conteggio delle parole
-    word_count = len(script_tts.split())
-    st.markdown(f"*(Lunghezza stimata: **{word_count} parole** — circa {round(word_count / 150, 1)} minuti di parlato)*")
-
-    # Mostra lo script
-    st.text_area(
-        "Script del radiogiornale", 
-        script_tts, 
-        height=300,
-    )
-
-    st.markdown("---")
-
-else:
-    pass
-
+        
+        st.markdown("---")
+    else:
+        # La gestione degli errori è inclusa nelle funzioni
+        pass
