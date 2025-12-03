@@ -1,7 +1,7 @@
 import streamlit as st
 import feedparser
 import json
-import re # Nuovo import per la pulizia del JSON
+import re # Necessario per la pulizia del JSON e il parsing
 from datetime import datetime, timedelta
 from google import genai
 from google.genai import types
@@ -17,11 +17,11 @@ st.set_page_config(page_title="🌍 Daily News Digest AI", layout="centered")
 # Inizializza la variabile a None
 GEMINI_API_KEY = None 
 try:
-    # Accesso diretto alla chiave dai secrets
+    # Accesso diretto alla chiave dai secrets di Streamlit
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 except KeyError:
-    # Se la chiave non è nei secrets, mostriamo un warning, ma la variabile resta None.
-    st.error("⚠️ KeyError: La chiave GEMINI_API_KEY non è stata trovata nei `secrets` di Streamlit.")
+    # L'errore sarà gestito nel blocco principale, qui solo per inizializzazione
+    pass 
 
 # Inizializzazione della variabile per evitare NameError
 final_digest = None 
@@ -139,8 +139,14 @@ def summarize_with_gemini(rss_articles, search_queries, status_placeholder):
     
     # --- 1. CONFIGURAZIONE CLIENTE ---
     try:
+        # Verifica della chiave API
+        if not GEMINI_API_KEY:
+            status_placeholder.error("Errore: Chiave API Gemini non trovata. Controlla i secrets di Streamlit.")
+            return None
+            
         client = genai.Client(api_key=GEMINI_API_KEY)
-    except Exception:
+    except Exception as e:
+        status_placeholder.error(f"Errore di inizializzazione del client Gemini: {e}")
         return None
 
     # --- 2. PREPARAZIONE DATI GREZZI E CONTROLLO ---
@@ -150,7 +156,10 @@ def summarize_with_gemini(rss_articles, search_queries, status_placeholder):
         formatted_rss_json = "[]"
         rss_warning = "ATTENZIONE: Gli articoli RSS forniti erano insufficienti (< 5) e sono stati rimossi dall'input JSON per forzare la Ricerca AI."
     else:
-        formatted_rss_json = json.dumps(rss_articles, indent=2)
+        try:
+            formatted_rss_json = json.dumps(rss_articles, indent=2)
+        except TypeError:
+            formatted_rss_json = "[[JSON SERIALIZATION ERROR: Check article objects]]"
         rss_warning = "Gli articoli RSS forniti sono sufficienti e inclusi."
 
 
@@ -162,7 +171,7 @@ def summarize_with_gemini(rss_articles, search_queries, status_placeholder):
     
     sections_list = ", ".join(SECTIONS_MAPPING.keys())
 
-    # ATTENZIONE: Stringa multiriga corretta con triple virgolette e istruzioni vincolanti
+    # CORREZIONE: Stringa multiriga con triple virgolette per risolvere il SyntaxError
     system_instruction = f"""
     Sei un giornalista radiofonico professionista, preciso e **MOLTO CONCISO**.
     
@@ -186,7 +195,7 @@ def summarize_with_gemini(rss_articles, search_queries, status_placeholder):
     
     config = types.GenerateContentConfig(
         system_instruction=system_instruction,
-        # Abbiamo rimosso i parametri response_mime_type/response_schema per evitare l'errore 400
+        # Rimosso response_mime_type/response_schema per evitare errore 400
         tools=[search_tool] 
     )
 
@@ -220,35 +229,71 @@ def summarize_with_gemini(rss_articles, search_queries, status_placeholder):
         
         raw_text = response.text
         
-        # --- PARSING AGGRESSIVO E ROBUSTO PER GESTIRE IL JSON ---
+        # --- PARSING AGGRESSIVO E ROBUSTO PER GESTIRE IL JSON (Fix per delimitatori) ---
         
         json_string = raw_text.strip() 
         
         # 1. Usa un'espressione regolare per trovare il blocco JSON racchiuso in ```json...```
-        # re.DOTALL permette che il punto (.) corrisponda anche alle newline
         match = re.search(r'```json\s*(\{.*\})\s*```', json_string, re.DOTALL)
         
         if match:
             # Se trova il blocco, estrae solo il contenuto JSON
             json_string = match.group(1).strip()
-        else:
-            # Tenta un fallback se non trova il blocco markdown (se il modello non l'ha usato)
+        
+        # 2. Tenta di caricare il JSON direttamente (soluzione pulita)
+        try:
+            digest_data = json.loads(json_string)
+            return digest_data
+        except json.JSONDecodeError as e:
+            # Se fallisce, tenta la riparazione
+            status_placeholder.warning(f"⚠️ Errore di decodifica JSON ('{e}'). Tentativo di riparazione...")
+            
+            # --- TENTATIVO DI RIPARAZIONE DELLA STRINGA GREZZA ---
+            
+            # 2a. Sostituisce i backslash singoli non scappati con doppi backslash
+            repaired_json_string = json_string.replace('\\', '\\\\')
+            
+            # 2b. Rimuove i caratteri di controllo non validi (incluse newlines non scappate)
+            repaired_json_string = re.sub(r'[\x00-\x1F\x7F]', '', repaired_json_string)
+
+
+            # 2c. Tenta di risolvere le virgolette doppie non scappate *all'interno* di valori di stringa JSON.
+            def escape_unescaped_quotes(match):
+                # match.group(3) è il testo tra le virgolette del valore
+                if match and match.group(3):
+                    content = match.group(3)
+                    # Scappa tutte le virgolette doppie interne che non sono già scappate
+                    escaped_content = re.sub(r'(?<!\\)"', r'\"', content)
+                    # Sostituisce le newlines con \n
+                    escaped_content = escaped_content.replace('\n', '\\n')
+                    
+                    return f'{match.group(1)}{match.group(2)}{escaped_content}{match.group(4)}'
+                return match.group(0)
+            
+            # Applica l'escaping solo al valore di stringa delle chiavi target.
+            repaired_json_string = re.sub(
+                r'("script_tts"|"titolo_digest")\s*:\s*(")(.*?)(")', 
+                escape_unescaped_quotes, 
+                repaired_json_string, 
+                flags=re.DOTALL
+            )
+                
+            # 3. Ora proviamo a caricare il JSON riparato
             try:
-                # Se il modello ha restituito JSON nudo, proviamo a caricarlo direttamente
-                digest_data = json.loads(json_string)
+                digest_data = json.loads(repaired_json_string)
                 return digest_data
-            except json.JSONDecodeError as e:
-                # Se entrambi falliscono, fornisce la risposta grezza per debug e lancia l'errore
-                st.error(f"❌ FALLIMENTO PARSING: Il modello non ha restituito JSON valido.")
-                st.code(f"RISPOSTA GREZZA DEL MODELLO:\n{raw_text}", language="text")
-                raise json.JSONDecodeError(f"Errore: {e}. Risposta grezza: {raw_text[:200]}...", doc=raw_text, pos=0)
+            except json.JSONDecodeError as e2:
+                 # Se fallisce anche la riparazione, mostriamo l'errore finale
+                status_placeholder.error(f"❌ FALLIMENTO RIPARAZIONE: Il JSON non è valido nemmeno dopo il tentativo di pulizia. Errore finale: {e2}")
+                st.code(f"RISPOSTA GREZZA (ORIGINALE):\n{raw_text}", language="text")
+                return None
 
-        # Carica il JSON pulito
-        digest_data = json.loads(json_string)
-        return digest_data
 
+    except APIError as e:
+        status_placeholder.error(f"❌ Errore API Gemini: {e}. Controlla i permessi e la validità della chiave API.")
+        return None
     except Exception as e:
-        status_placeholder.error(f"❌ Errore durante la sintesi AI: {e}. Controlla i logs per dettagli.")
+        status_placeholder.error(f"❌ Errore critico durante la sintesi AI: {e}.")
         return None
 
 
@@ -285,7 +330,7 @@ if st.button("▶️ Genera il Radiogiornale Quotidiano", type="primary"):
     
     # CHECK CORRETTO: Verifica se la variabile GEMINI_API_KEY ha un valore
     if not GEMINI_API_KEY:
-        st.error("Impossibile procedere. La chiave GEMINI_API_KEY è mancante o non è stata caricata.")
+        st.error("Impossibile procedere. La chiave **GEMINI_API_KEY** è mancante o non è stata caricata dai `secrets`.")
         st.stop()
         
     # Placeholder per visualizzare i log di debug in tempo reale
@@ -308,7 +353,7 @@ if st.button("▶️ Genera il Radiogiornale Quotidiano", type="primary"):
         
         st.markdown("---")
         
-        # --- BLOCCO RIPRODUZIONE AUDIO ---
+        # --- BLOCCO RIPRODUZIONE AUDIO (con gTTS) ---
         st.subheader("Ascolta il Digest")
         
         try:
@@ -327,7 +372,7 @@ if st.button("▶️ Genera il Radiogiornale Quotidiano", type="primary"):
             st.info("Riproduzione automatica avviata. Se non parte, premi play nel widget sopra.")
             
         except Exception as e:
-            st.error(f"Impossibile generare l'audio: {e}")
+            st.error(f"Impossibile generare l'audio (gTTS): {e}")
             
         # --- FINE BLOCCO AUDIO ---
 
