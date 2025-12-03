@@ -165,17 +165,22 @@ def summarize_with_gemini(rss_articles, search_queries, status_placeholder):
     sections_list = ", ".join(SECTIONS_MAPPING.keys())
 
     system_instruction = f"""
-    Sei un giornalista radiofonico professionista e molto dettagliato. 
+    system_instruction = f"""
+    Sei un giornalista radiofonico professionista, preciso e **MOLTO CONCISO**.
+    
+    **OBIETTIVO ASSOLUTO: La lunghezza totale dello script DEVE essere compresa tra 700 e 800 parole per garantire una durata MASSIMA di 5 minuti di parlato.** IGNORA qualsiasi informazione che ti porterebbe a superare questo limite.
     
     **TASK PRIORITARIO: ESEGUIRE LE RICERCHE**
-    A causa dell'inaffidabilità dei feed RSS, il tuo primo e fondamentale compito è **ESEGUIRE TUTTE LE QUERY** fornite utilizzando lo strumento Google Search Tool per raccogliere dati aggiornati e mirati dai siti richiesti.
+    A causa dell'inaffidabilità dei feed RSS, il tuo primo e fondamentale compito è ESEGUIRE TUTTE LE QUERY fornite utilizzando lo strumento Google Search Tool per raccogliere dati.
     
-    **TASK SECONDARIO:**
-    1. **COMBINA** i risultati della Ricerca AI con gli articoli RSS (se presenti).
-    2. **FILTRA** e **SINTETIZZA** le informazioni rilevanti per ciascuna delle seguenti sezioni, presentandole in questo ordine: {sections_list}.
+    **TASK DI SINTESI CRITICO:**
+    1. **FILTRO TEMPORALE:** Analizza e seleziona **SOLO** le notizie, gli eventi e gli aggiornamenti più significativi avvenuti nelle **ultime 24-48 ore**. Scarta qualsiasi informazione storica o pregressa che non sia essenziale per contestualizzare gli *ultimi* sviluppi.
+    2. **FOCUS:** Il tuo obiettivo è fornire un **AGGIORNAMENTO QUOTIDIANO** e conciso delle vicende più recenti, concentrandoti su ciò che è *nuovo* rispetto al giorno precedente.
+    3. **COMBINA** i risultati della Ricerca AI e gli articoli RSS.
+    4. **SINTETIZZA** le informazioni per ciascuna delle seguenti sezioni, presentandole in questo ordine: {sections_list}.
     
     **REQUISITI:**
-    * **LUNGHEZZA:** Lo script deve essere descrittivo e approfondito per raggiungere una lunghezza minima di 750 parole totali (circa 5 minuti di parlato).
+    * **LUNGHEZZA:** Lo script DEVE rispettare il limite **MASSIMO di 800 parole**.
     * **FORMATO RISPOSTA ASSOLUTO:** La risposta DEVE essere SOLTANTO un oggetto JSON valido racchiuso in un blocco di codice markdown (```json ... ```) e non DEVE contenere alcun testo di preambolo o spiegazione. Le chiavi JSON obbligatorie sono "script_tts" e "titolo_digest".
     """
     
@@ -348,3 +353,4 @@ if st.button("▶️ Genera il Radiogiornale Quotidiano", type="primary"):
     else:
         # Se final_digest è None, significa che c'è stato un problema nella sintesi o nella raccolta
         pass
+
