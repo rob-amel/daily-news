@@ -1,6 +1,7 @@
 import streamlit as st
 import feedparser
 import json
+import re # Nuovo import per la pulizia del JSON
 from datetime import datetime, timedelta
 from google import genai
 from google.genai import types
@@ -127,7 +128,6 @@ def get_articles_via_rss(status_placeholder):
     return articles
 
 def run_news_collection(status_placeholder):
-    # La parte di ricerca è nel prompt di Gemini
     return get_articles_via_rss(status_placeholder)
 
 
@@ -158,21 +158,7 @@ def summarize_with_gemini(rss_articles, search_queries, status_placeholder):
          status_placeholder.error("⚠️ Nessun dato da processare (RSS vuoti e nessuna query di ricerca da eseguire).")
          return None 
         
-    # --- 3. DEFINIZIONE DELLO SCHEMA JSON ---
-    final_digest_schema = types.Schema(
-        type=types.Type.OBJECT,
-        properties={
-            "script_tts": types.Schema(
-                type=types.Type.STRING, 
-                description="L'intero testo del radiogiornale. Deve essere lungo almeno 750 parole per garantire una durata di 5 minuti di parlato. Non usare titoli o elenchi."
-            ),
-            "titolo_digest": types.Schema(
-                type=types.Type.STRING, 
-                description="Un titolo conciso (massimo 10 parole) per il digest."
-            )
-        },
-        required=["script_tts", "titolo_digest"]
-    )
+    # Non usiamo response_schema per evitare l'errore 400.
     
     # --- 4. PROMPT COMPLETO E CONFIGURAZIONE PER GEMINI ---
     
@@ -190,18 +176,17 @@ def summarize_with_gemini(rss_articles, search_queries, status_placeholder):
     
     **REQUISITI:**
     * **LUNGHEZZA:** Lo script deve essere descrittivo e approfondito per raggiungere una lunghezza minima di 750 parole totali (circa 5 minuti di parlato).
-    * **FORMATO:** Inizia con una breve introduzione e concludi con una chiusura. NON USARE titoli Markdown o elenchi puntati.
+    * **FORMATO RISPOSTA ASSOLUTO:** La risposta DEVE essere SOLTANTO un oggetto JSON valido racchiuso in un blocco di codice markdown (```json ... ```) e non DEVE contenere alcun testo di preambolo o spiegazione. Le chiavi JSON obbligatorie sono "script_tts" e "titolo_digest".
     """
     
-    # CORREZIONE DEL VALIDATION ERROR: definisce il tool in formato types.Tool
     search_tool = types.Tool(google_search={}) 
     
     config = types.GenerateContentConfig(
         system_instruction=system_instruction,
-        # RIMOSSO: response_mime_type="application/json"
-        # RIMOSSO: response_schema=final_digest_schema
+        # Abbiamo rimosso i parametri che causavano l'errore 400
         tools=[search_tool] 
     )
+
     prompt = f"""
     Genera lo script TTS (Text-to-Speech) basandoti sui dati combinati di RSS e ricerca.
     
@@ -230,13 +215,32 @@ def summarize_with_gemini(rss_articles, search_queries, status_placeholder):
             config=config,
         )
         
-        # Pulizia e decodifica del JSON
-        json_string = response.text.strip()
-        if json_string.startswith("```json"):
-            json_string = json_string[7:]
-        if json_string.endswith("```"):
-            json_string = json_string[:-3]
-            
+        raw_text = response.text
+        
+        # --- PARSING AGGRESSIVO E ROBUSTO ---
+        
+        # 1. Rimuove eventuali spazi, nuove linee o caratteri invisibili all'inizio/fine
+        json_string = raw_text.strip() 
+        
+        # 2. Usa un'espressione regolare per trovare il blocco JSON (più robusto di .startswith)
+        match = re.search(r'```json\s*(\{.*\})\s*```', json_string, re.DOTALL)
+        
+        if match:
+            # Se trova il blocco, estrae solo il contenuto JSON
+            json_string = match.group(1).strip()
+        else:
+            # Tenta un fallback se non trova il blocco markdown (se il modello non l'ha usato)
+            try:
+                # Se il modello ha restituito JSON nudo, proviamo a caricarlo direttamente
+                digest_data = json.loads(json_string)
+                return digest_data
+            except json.JSONDecodeError as e:
+                # Se entrambi falliscono, lancia un errore con la risposta grezza per debug
+                st.error(f"❌ FALLIMENTO PARSING: Il modello non ha restituito JSON valido.")
+                st.code(f"RISPOSTA GREZZA DEL MODELLO:\n{raw_text}", language="text")
+                raise json.JSONDecodeError(f"Errore: {e}. Risposta grezza: {raw_text[:200]}...", doc=raw_text, pos=0)
+
+        # Carica il JSON pulito
         digest_data = json.loads(json_string)
         return digest_data
 
@@ -344,4 +348,3 @@ if st.button("▶️ Genera il Radiogiornale Quotidiano", type="primary"):
     else:
         # Se final_digest è None, significa che c'è stato un problema nella sintesi o nella raccolta
         pass
-
