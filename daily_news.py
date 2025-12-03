@@ -18,34 +18,34 @@ except KeyError:
 
 # ----------------------------------------------------------------------
 # --- 📍 MAPPAZIONE FISSA DELLE FONTI RSS PER LE TUE ESIGENZE ---
-# Questi sono i feed RSS generali (o per le sezioni principali) dei siti richiesti.
-# La suddivisione per sezione (Libano, Gaza, etc.) è gestita raggruppando i feed.
+# Ho mappato i feed RSS disponibili per i siti richiesti.
+# Nota: La ricerca per argomenti specifici (es. "solo Libano") avviene tramite la sintesi AI.
 
 FEED_MAPPING = {
-    # 1. Libano (Uso L'Orient Le Jour, molto specifico, e Al Jazeera)
+    # 1. Libano (Focus su L'Orient Le Jour e Al Jazeera)
     "Libano": [
-        "https://www.lorientlejour.com/rss/all.xml", # L'Orient-Le Jour (francese)
-        "https://www.aljazeera.com/xml/rss/all.xml" # Al Jazeera (inglese)
+        "https://www.lorientlejour.com/rss/all.xml", 
+        "https://www.aljazeera.com/xml/rss/all.xml"
     ],
-    # 2. Gaza (Uso Middle East Eye e Al Jazeera per la copertura)
+    # 2. Gaza (Focus su Middle East Eye e Al Jazeera)
     "Gaza": [
-        "https://www.middleeasteye.net/rss/all", # Middle East Eye (inglese)
+        "https://www.middleeasteye.net/rss/all", 
         "https://www.aljazeera.com/xml/rss/all.xml"
     ],
     # 3. Medio Oriente (Generale) (Aggiungiamo Al Monitor e Orient XXI)
     "Medio Oriente (Siria, Palestina)": [
-        "https://www.al-monitor.com/rss/news.xml", # Al-Monitor (inglese)
-        "https://www.orientxxi.info/public/backend.php?lang=it", # Orient XXI (italiano)
+        "https://www.al-monitor.com/rss/news.xml", 
+        "https://www.orientxxi.info/public/backend.php?lang=it",
     ],
-    # 4. Italia politica interna (Uso fonti italiane)
+    # 4. Italia politica interna (Focus sui siti italiani che hai scelto)
     "Italia (Politica Interna)": [
-        "https://rss.ilmanifesto.it/ilmanifesto.xml", # Il Manifesto
-        "https://www.domani.it/rss", # Domani
-        "https://espresso.repubblica.it/rss.xml" # L'Espresso
+        "https://rss.ilmanifesto.it/ilmanifesto.xml", 
+        "https://www.domani.it/rss", 
+        "https://espresso.repubblica.it/rss.xml" 
     ],
-    # 5. Mondo (Notizie principali) (Uso Internazionale e Al Jazeera generico)
+    # 5. Mondo (Notizie principali) (Internazionale e altri feed non ancora utilizzati)
     "Mondo (Principali)": [
-        "https://www.internazionale.it/rss", # Internazionale
+        "https://www.internazionale.it/rss", 
         "https://www.aljazeera.com/xml/rss/all.xml"
     ]
 }
@@ -58,7 +58,7 @@ FEED_MAPPING = {
 
 def get_news_from_rss(section_name):
     """
-    Legge tutti i feed RSS per una sezione data e raccoglie gli articoli recenti.
+    Legge tutti i feed RSS per una sezione data e raccoglie gli articoli recenti (ultime 24h).
     """
     articles = []
     feed_list = FEED_MAPPING.get(section_name, [])
@@ -71,25 +71,24 @@ def get_news_from_rss(section_name):
             feed = feedparser.parse(url)
             
             for entry in feed.entries:
-                # Controlla se l'articolo è abbastanza recente
                 is_recent = True
                 if hasattr(entry, 'published_parsed') and entry.published_parsed:
                     published_date = datetime(*entry.published_parsed[:6])
                     if published_date < yesterday:
-                        is_recent = False # Articolo troppo vecchio
+                        is_recent = False
 
                 if is_recent:
-                    # Estrai la descrizione se disponibile, altrimenti usa un riassunto
+                    # Estrai la descrizione se disponibile
                     description = getattr(entry, 'summary', None) or getattr(entry, 'description', None) or ""
                     
-                    # Aggiungiamo la fonte all'articolo
+                    # Estrai il nome della fonte
                     source = feed.feed.title if hasattr(feed.feed, 'title') else url.split('/')[2]
 
                     articles.append({
                         'title': entry.title,
                         'description': description,
                         'url': entry.link,
-                        'source': source # Includiamo la fonte per il debug di Gemini
+                        'source': source
                     })
         except Exception as e:
             st.warning(f"Errore nella lettura del feed RSS {url} per la sezione '{section_name}': {e}")
@@ -104,12 +103,11 @@ def run_news_collection():
     """
     raw_digest_data = []
     
-    # Ordine delle sezioni per l'output (le chiavi del dizionario)
+    # Ordine delle sezioni
     sections_order = ["Libano", "Gaza", "Medio Oriente (Siria, Palestina)", 
                       "Italia (Politica Interna)", "Mondo (Principali)"]
     
     for section_title in sections_order:
-        # Recupera gli articoli da tutti i feed mappati per questa sezione
         articles = get_news_from_rss(section_title)
         raw_digest_data.append({"section": section_title, "articles": articles})
 
@@ -118,7 +116,7 @@ def run_news_collection():
 
 def summarize_with_gemini(raw_digest_data):
     """
-    Invia i dati grezzi delle notizie a Gemini per sintetizzare e strutturare il digest.
+    Invia i dati grezzi delle notizie a Gemini per sintetizzare in un unico script vocale.
     """
     
     # --- 1. CONFIGURAZIONE CLIENTE ---
@@ -127,7 +125,7 @@ def summarize_with_gemini(raw_digest_data):
     except Exception:
         return None
 
-    # --- 2. PREPARAZIONE DATI GREZZI PER IL PROMPT ---
+    # --- 2. PREPARAZIONE DATI GREZZI E CONTROLLO ---
     formatted_input = ""
     total_articles = 0
     
@@ -136,57 +134,45 @@ def summarize_with_gemini(raw_digest_data):
         articles = section_data['articles']
         total_articles += len(articles)
         
+        # Aggiungiamo le intestazioni per aiutare Gemini a suddividere logicamente
+        formatted_input += f"\n\n### SEZIONE: {section_title} ({len(articles)} ARTICOLI DA SINTETIZZARE)\n"
         if not articles:
-            formatted_input += f"### {section_title} (NESSUNA NOTIZIA TROVATA)\n\n"
+            formatted_input += "NESSUNA NOTIZIA RECENTE TROVATA IN QUESTA SEZIONE.\n"
             continue
         
-        formatted_input += f"### {section_title} ({len(articles)} ARTICOLI DA SINTETIZZARE)\n"
         for i, article in enumerate(articles):
-            # Passiamo il titolo e la descrizione a Gemini
             formatted_input += f"- Articolo {i+1} [Fonte: {article.get('source', 'Sconosciuta')}]: {article['title']}\n"
             if article['description']:
                 formatted_input += f"  Descrizione: {article['description'][:500]}...\n"
-        formatted_input += "\n"
         
-    # Se non c'è nulla, usciamo subito e mostriamo un errore specifico
+    # Se non c'è nulla, usciamo subito
     if total_articles == 0:
         st.warning("🚨 ATTENZIONE: Nessun articolo recente trovato in NESSUN feed RSS. Controlla che gli URL siano corretti o che ci siano notizie fresche (ultime 24h).")
-        return None # Ritorna None per interrompere la sintesi
+        return None
 
-    # --- 3. DEFINIZIONE DELLO SCHEMA JSON (OUTPUT FORZATO) ---
-    section_summary_schema = types.Schema(
-        type=types.Type.OBJECT,
-        properties={
-            "sintesi_testo": types.Schema(type=types.Type.STRING, description="Riassunto conciso in 3-5 frasi dei fatti principali di questa sezione."),
-            "punti_chiave": types.Schema(
-                type=types.Type.ARRAY,
-                description="Elenco di 3-5 bullet point con i titoli più importanti.",
-                items=types.Schema(type=types.Type.STRING)
-            ),
-            "link_principale": types.Schema(type=types.Type.STRING, description="L'URL dell'articolo più rilevante trovato in questa sezione, dalla fonte originale."),
-            "fonte_principale": types.Schema(type=types.Type.STRING, description="Il nome della fonte (es. Al Jazeera, Il Manifesto) da cui proviene il link principale.")
-        },
-        required=["sintesi_testo", "punti_chiave"]
-    )
-
+    # --- 3. DEFINIZIONE DEL NUOVO SCHEMA JSON (Output TTS) ---
     final_digest_schema = types.Schema(
         type=types.Type.OBJECT,
         properties={
-            "Libano": section_summary_schema,
-            "Gaza": section_summary_schema,
-            "Medio Oriente (Siria, Palestina)": section_summary_schema,
-            "Italia (Politica Interna)": section_summary_schema,
-            "Mondo (Principali)": section_summary_schema,
+            "script_tts": types.Schema(
+                type=types.Type.STRING, 
+                description="L'intero testo del radiogiornale, formattato per la riproduzione vocale, senza markup Markdown o JSON."
+            ),
+            "titolo_digest": types.Schema(
+                type=types.Type.STRING, 
+                description="Un titolo conciso (massimo 10 parole) per il digest."
+            )
         },
-        required=["Libano", "Gaza", "Medio Oriente (Siria, Palestina)", "Italia (Politica Interna)", "Mondo (Principali)"]
+        required=["script_tts", "titolo_digest"]
     )
     
     # --- 4. PROMPT COMPLETO E CONFIGURAZIONE PER GEMINI ---
 
-    system_instruction = """
-    Sei un analista di notizie esperto e molto conciso. Genera un "digest" delle notizie principali delle ultime 24 ore.
-    Sintetizza tutti i contenuti in modo obiettivo, neutrale e rigorosamente in italiano, anche se le fonti originali sono in inglese o francese.
-    L'output DEVE rispettare lo schema JSON fornito, e il link principale deve essere scelto tra gli articoli forniti.
+    system_instruction = f"""
+    Sei un giornalista radiofonico professionista e molto conciso. Il tuo compito è creare lo script per un radiogiornale.
+    Sintetizza i contenuti in un testo unico, scorrevole e narrativo, mantenendo il seguente ordine di importanza per le sezioni: Libano, Gaza, Medio Oriente, Italia, Mondo.
+    Utilizza un tono neutro e informativo. Inizia con una breve introduzione (es. "Benvenuti al digest di Lino Bandi...") e concludi con una chiusura.
+    NON USARE titoli Markdown (#, ##, ***) o elenchi puntati (*, -). La sintesi DEVE essere un testo fluido.
     """
     
     config = types.GenerateContentConfig(
@@ -196,8 +182,7 @@ def summarize_with_gemini(raw_digest_data):
     )
 
     prompt = f"""
-    Genera il digest delle notizie basandoti SOLO ed ESCLUSIVAMENTE sui seguenti articoli grezzi. 
-    Mantieni l'ordine delle sezioni.
+    Genera lo script TTS (Text-to-Speech) basandoti SOLO ed ESCLUSIVAMENTE sui seguenti articoli grezzi. 
     
     ARTICOLI GREZZI:
     ---
@@ -228,7 +213,6 @@ def summarize_with_gemini(raw_digest_data):
         return None
     except json.JSONDecodeError:
         st.error("Errore di decodifica JSON: Gemini non ha restituito un formato JSON valido. Riprova.")
-        # Se fallisce, stampiamo la risposta per il debug
         st.code(json_string)
         return None
     except Exception as e:
@@ -253,20 +237,21 @@ st.markdown("---")
 
 # --- INTRODUZIONE ---
 st.markdown("""
-**Ciao! Eccoci per la sintesi dei fatti del giorno!**
+**Ciao! Lino Bandi ti da nuovamente il benvenuto e vuole aiutarti a 
+preparare lo script per il tuo radiogiornale quotidiano.**
 
-Le fonti utilizzate sono: Al Jazeera, Middle East Eye, Al Monitor, L'Orient Le Jour, Orient XXI, L'Espresso, Il Manifesto, Domani, Internazionale.
+Le fonti utilizzate sono: **Al Jazeera, Middle East Eye, Al Monitor, L'Orient Le Jour, Orient XXI, L'Espresso, Il Manifesto, Domani, Internazionale.**
 """)
 
 st.info("""
-L'applicazione utilizza i feed RSS delle fonti che hai scelto e il sistema **Gemini AI Flash 2.5** per la sintesi.
+L'output è in formato testo continuo (TTS) pronto per essere copiato e incollato nel tuo servizio di sintesi vocale preferito.
 """)
 st.markdown("---")
 
 
 # --- ESECUZIONE E DIGEST ---
 
-if st.button("▶️ Genera il Digest Quotidiano", type="primary"):
+if st.button("▶️ Genera il Radiogiornale Quotidiano", type="primary"):
     
     if not GEMINI_API_KEY:
         st.error("Impossibile procedere. La chiave GEMINI_API_KEY è mancante nei secrets.")
@@ -278,48 +263,43 @@ if st.button("▶️ Genera il Digest Quotidiano", type="primary"):
     progress_bar.progress(30, text="1/3: Raccolta articoli dai feed RSS in corso...")
     raw_news_data = run_news_collection()
     
-    # Controlliamo la variabile di ritorno della funzione summarize_with_gemini
-    
     # 2. SINTESI CON GEMINI
     final_digest = None
     if raw_news_data:
         progress_bar.progress(70, text="2/3: Sintesi e strutturazione con Gemini AI...")
-        final_digest = summarize_with_gemini(raw_news_data) 
+        # Per debug, salviamo il conteggio degli articoli prima di chiamare Gemini
+        total_articles = sum(len(d['articles']) for d in raw_news_data)
+        
+        # Chiamata alla sintesi
+        if total_articles > 0:
+             final_digest = summarize_with_gemini(raw_news_data) 
+        # La funzione summarize_with_gemini gestisce il caso total_articles=0
     
     progress_bar.empty()
     
     # 3. VISUALIZZAZIONE DEL RISULTATO
     if final_digest:
-        st.success("✅ Digest delle notizie generato con successo!")
-        st.header("Il tuo Digest Quotidiano 📰")
+        st.success("✅ Script del radiogiornale generato con successo!")
         
-        # Ordine di visualizzazione
-        sections_order = ["Libano", "Gaza", "Medio Oriente (Siria, Palestina)", "Italia (Politica Interna)", "Mondo (Principali)"]
+        titolo = final_digest.get('titolo_digest', 'Il Tuo Digest Quotidiano')
+        script_tts = final_digest.get('script_tts', 'Errore nella generazione dello script.')
         
-        for section in sections_order:
-            if section in final_digest:
-                data = final_digest[section]
-                
-                # Se la sintesi non è "N/A" (risposta di Gemini in caso di zero articoli)
-                if data.get('sintesi_testo', 'N/A') == 'N/A' and not data.get('punti_chiave'):
-                    continue
-                
-                st.subheader(f"➡️ {section}")
-                
-                # Sintesi
-                st.markdown(f"**Sintesi:** {data.get('sintesi_testo', 'Nessuna sintesi disponibile.')}")
-                
-                # Punti chiave
-                st.markdown("**Punti Chiave:**")
-                st.markdown("- " + "\n- ".join(data.get('punti_chiave', ['Nessun punto chiave significativo trovato.'])))
-                
-                # Link
-                if data.get('link_principale'):
-                    fonte = data.get('fonte_principale', 'Link Sconosciuto')
-                    st.markdown(f"🔗 [Leggi l'articolo principale da **{fonte}**]({data['link_principale']})")
-                
-                st.markdown("---")
+        st.header(f"🎙️ {titolo}")
+        
+        st.markdown("""
+        ---
+        #### Script Completo per la Sintesi Vocale (TTS)
+        """)
+        
+        # Mostra lo script in un box di testo fisso (textarea)
+        st.text_area(
+            "Copia questo script per la riproduzione vocale (Text-to-Speech)", 
+            script_tts, 
+            height=400,
+        )
+        
+        st.markdown("---")
         
     else:
-        # L'errore specifico (mancanza di articoli o errore Gemini) è gestito internamente
+        # Se final_digest è None, significa che c'è stato un problema (già segnalato da st.error/st.warning)
         pass
