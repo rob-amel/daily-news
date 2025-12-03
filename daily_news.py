@@ -222,16 +222,9 @@ def summarize_with_gemini(raw_digest_data):
 
 # --- LOGO E TITOLO ---
 
-col_logo, col_title = st.columns([1.5, 5]) 
-
-with col_logo:
-    try:
-        st.image("logo_amelia.png", width=100) 
-    except FileNotFoundError:
-        pass
 
 with col_title:
-    st.title("📋 Lino Bandi 2 - L'Estrattore") # Titolo corretto
+    st.title("Daily News") # Titolo corretto
 
 st.markdown("---")
 
@@ -324,3 +317,4 @@ if st.button("▶️ Genera il Digest Quotidiano", type="primary"):
         
     else:
         st.error("⚠️ La generazione del digest è fallita. Verifica le chiavi API e prova a generare nuovamente.")
+
