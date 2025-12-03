@@ -26,6 +26,14 @@ except KeyError:
 # URL base per l'API delle notizie (è un esempio, assicurati di usare l'URL del servizio che scegli)
 BASE_NEWS_API_URL = "https://newsapi.org/v2/everything"
 
+# ----------------------------------------------------------------------
+# --- 📍 FONTI PERSONALIZZATE FISSE NEL CODICE ---
+# Se vuoi includere siti specifici, inserisci i loro domini qui.
+# Esempio: ["repubblica.it", "ilsole24ore.com", "aljazeera.com"]
+# Se non vuoi fonti extra, lascia la lista vuota: []
+CUSTOM_FIXED_SOURCES = [] # Lasciato vuoto per ora
+# ----------------------------------------------------------------------
+
 
 # ----------------------------------------------------------------------
 # --------------------- FUNZIONI DI GESTIONE DATI ----------------------
@@ -39,7 +47,7 @@ def get_news_from_api(query, language='it', limit=7):
     date_from = (datetime.now() - timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%S')
     
     params = {
-        'q': query, # Utilizzo di 'q' invece di 'qInTitle' per una ricerca più ampia
+        'q': query,
         'language': language,
         'sortBy': 'publishedAt',
         'from': date_from,
@@ -52,7 +60,6 @@ def get_news_from_api(query, language='it', limit=7):
         response.raise_for_status()
         data = response.json()
         
-        # Filtra solo i campi essenziali per Gemini
         articles = [{'title': a['title'], 'description': a['description'], 'url': a['url']}
                     for a in data.get('articles', []) if a['description'] and a['title']]
         return articles
@@ -80,7 +87,6 @@ def run_news_collection(user_sources_list):
     raw_digest_data.append({"section": "Gaza", "articles": gaza_news})
 
     # 3. Medio Oriente (Generale, con focus e esclusione)
-    # Escludiamo i risultati che contengono Libano e Gaza, già trattati
     me_news = get_news_from_api(query="(Medio Oriente OR Siria OR Palestina) NOT Libano NOT Gaza", language='it', limit=5)
     raw_digest_data.append({"section": "Medio Oriente (Siria, Palestina)", "articles": me_news})
 
@@ -92,11 +98,10 @@ def run_news_collection(user_sources_list):
     world_news = get_news_from_api(query="Notizie principali", language='it', limit=5)
     raw_digest_data.append({"section": "Mondo (Principali)", "articles": world_news})
     
-    # 6. Fonti Personalizzate (se presenti)
+    # 6. Fonti Personalizzate (se presenti e definite in CUSTOM_FIXED_SOURCES)
     if user_sources_list:
         custom_news = []
         for site in user_sources_list:
-            # Ricerca per dominio specifico
             site_articles = get_news_from_api(query=f"site:{site}", language='it', limit=3)
             custom_news.extend(site_articles)
             
@@ -109,13 +114,13 @@ def run_news_collection(user_sources_list):
 def summarize_with_gemini(raw_digest_data):
     """
     Invia i dati grezzi delle notizie a Gemini per sintetizzare e strutturare il digest.
+    Correzione: usa GenerateContentConfig per system_instruction.
     """
     
     # --- 1. CONFIGURAZIONE CLIENTE ---
     try:
         client = genai.Client(api_key=GEMINI_API_KEY)
     except Exception:
-        # L'errore è già stato mostrato in precedenza (chiave mancante)
         return None
 
     # --- 2. PREPARAZIONE DATI GREZZI PER IL PROMPT ---
@@ -132,7 +137,6 @@ def summarize_with_gemini(raw_digest_data):
         for i, article in enumerate(articles):
             formatted_input += f"- Articolo {i+1}: {article['title']}\n"
             if article['description']:
-                # Tronchiamo la descrizione per non superare il contesto e focalizzarci sui fatti
                 formatted_input += f"  Descrizione: {article['description'][:300]}...\n"
         formatted_input += "\n"
 
@@ -164,13 +168,20 @@ def summarize_with_gemini(raw_digest_data):
         required=["Libano", "Gaza", "Medio Oriente (Siria, Palestina)", "Italia (Politica Interna)", "Mondo (Principali)"]
     )
     
-    # --- 4. PROMPT COMPLETO PER GEMINI ---
+    # --- 4. PROMPT COMPLETO E CONFIGURAZIONE PER GEMINI ---
 
     system_instruction = """
     Sei un analista di notizie esperto e molto conciso. Genera un digest delle notizie principali delle ultime 24 ore.
     Sintetizza i contenuti di ogni sezione in modo obiettivo, neutrale e rigorosamente in italiano.
     L'output DEVE rispettare lo schema JSON fornito.
     """
+    
+    # Nuovo oggetto config che include le istruzioni di sistema (CORREZIONE ERRORE)
+    config = types.GenerateContentConfig(
+        system_instruction=system_instruction,
+        response_mime_type="application/json",
+        response_schema=final_digest_schema,
+    )
 
     prompt = f"""
     Genera il digest delle notizie basandoti sui seguenti articoli grezzi. 
@@ -187,11 +198,7 @@ def summarize_with_gemini(raw_digest_data):
         response = client.models.generate_content(
             model='gemini-2.5-flash', 
             contents=prompt,
-            system_instruction=system_instruction,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=final_digest_schema,
-            ),
+            config=config, # Passiamo l'oggetto config completo qui
         )
 
         json_string = response.text.strip()
@@ -205,11 +212,11 @@ def summarize_with_gemini(raw_digest_data):
         return digest_data
 
     except APIError as e:
+        # L'errore ora dovrebbe essere gestito correttamente dalla sintassi API
         st.error(f"Errore API Gemini: La chiamata è fallita. Causa: {e}. Controlla chiave e quota.")
         return None
     except json.JSONDecodeError:
         st.error("Errore di decodifica JSON: Gemini non ha restituito un formato JSON valido. Riprova.")
-        # Utile per il debug se il modello risponde in modo non conforme: st.text(json_string)
         return None
     except Exception as e:
         st.error(f"Errore inatteso durante la sintesi AI: {e}")
@@ -220,17 +227,13 @@ def summarize_with_gemini(raw_digest_data):
 # --------------------- INTERFACCIA STREAMLIT (Frontend) ---------------
 # ----------------------------------------------------------------------
 
-# --- LOGO E TITOLO ---
-
-# CORREZIONE: Definiamo le colonne per evitare il NameError
+# --- LOGO E TITOLO (Corretto il NameError) ---
 col_icon, col_title = st.columns([0.5, 6.5]) 
 
 with col_icon:
-    # Icona del mondo
     st.markdown("## 🌍") 
 
 with col_title:
-    # Nuovo titolo come richiesto
     st.title("Daily News") 
 
 st.markdown("---")
@@ -239,36 +242,19 @@ st.markdown("---")
 st.markdown("""
 **Ciao! Lino Bandi ti da nuovamente il benvenuto e vuole aiutarti a 
 fare una rapida sintesi delle notizie del giorno!**
-
-Seleziona le tue fonti personalizzate (opzionali) e genera il tuo digest quotidiano.
 """)
 
 st.info("""
 L'applicazione si appoggia sul sistema **Gemini AI Flash 2.5** e 
-pertanto può commettere errori.
+pertanto può commettere errori. Le fonti personalizzate sono definite nel codice.
 """)
 st.markdown("---")
 
-# --- SLOT PER FONTI PERSONALIZZATE ---
-if 'custom_sources' not in st.session_state:
-    st.session_state['custom_sources'] = ""
-    
-with st.expander("➕ Gestisci le tue fonti di notizie personalizzate (Opzionale)"):
-    st.markdown("Inserisci qui i **domini** dei siti che vuoi includere nel digest. Separa ogni dominio con una virgola.")
-    
-    user_custom_sources_input = st.text_input(
-        "Domini dei siti (es: repubblica.it, ilsole24ore.com)", 
-        key='custom_sources_input',
-        value=st.session_state['custom_sources']
-    )
-    # Aggiorna la session state per mantenere il valore
-    st.session_state['custom_sources'] = user_custom_sources_input
-    
 
 # --- ESECUZIONE E DIGEST ---
 
-# Prepara la lista delle fonti da passare alla funzione di raccolta
-user_sources_list = [source.strip() for source in st.session_state['custom_sources'].split(',') if source.strip()]
+# Passiamo la lista delle fonti fisse DEFINITE ALL'INIZIO (CUSTOM_FIXED_SOURCES)
+user_sources_list = CUSTOM_FIXED_SOURCES
 
 if st.button("▶️ Genera il Digest Quotidiano", type="primary"):
     
@@ -302,7 +288,6 @@ if st.button("▶️ Genera il Digest Quotidiano", type="primary"):
             if section in final_digest:
                 data = final_digest[section]
                 
-                # Non visualizziamo se il riassunto è "N/A" (risposta di Gemini in caso di zero articoli)
                 if data.get('sintesi_testo', 'N/A') == 'N/A' and not data.get('punti_chiave'):
                     continue
                 
@@ -313,7 +298,6 @@ if st.button("▶️ Genera il Digest Quotidiano", type="primary"):
                 
                 # Punti chiave
                 st.markdown("**Punti Chiave:**")
-                # Aggiunge un punto vuoto se la lista è vuota
                 st.markdown("- " + "\n- ".join(data.get('punti_chiave', ['Nessun punto chiave significativo trovato.'])))
                 
                 # Link
