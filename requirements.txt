@@ -1,6 +1,6 @@
 streamlit
 requests
-beautifulsoup4
+google-genai
 pandas
-google-api-python-client
-openpyxl
+# pypdf (Se in futuro vuoi riunire l'app news con l'estrattore PDF)
+# xlsxwriter (Se in futuro vuoi aggiungere una funzionalità di export in Excel)
