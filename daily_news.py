@@ -158,13 +158,11 @@ def summarize_with_gemini(rss_articles, search_queries, status_placeholder):
          status_placeholder.error("⚠️ Nessun dato da processare (RSS vuoti e nessuna query di ricerca da eseguire).")
          return None 
         
-    # Non usiamo response_schema per evitare l'errore 400.
-    
     # --- 4. PROMPT COMPLETO E CONFIGURAZIONE PER GEMINI ---
     
     sections_list = ", ".join(SECTIONS_MAPPING.keys())
 
-    system_instruction = f"""
+    # ATTENZIONE: Stringa multiriga corretta con triple virgolette e istruzioni vincolanti
     system_instruction = f"""
     Sei un giornalista radiofonico professionista, preciso e **MOLTO CONCISO**.
     
@@ -188,7 +186,7 @@ def summarize_with_gemini(rss_articles, search_queries, status_placeholder):
     
     config = types.GenerateContentConfig(
         system_instruction=system_instruction,
-        # Abbiamo rimosso i parametri che causavano l'errore 400
+        # Abbiamo rimosso i parametri response_mime_type/response_schema per evitare l'errore 400
         tools=[search_tool] 
     )
 
@@ -222,12 +220,12 @@ def summarize_with_gemini(rss_articles, search_queries, status_placeholder):
         
         raw_text = response.text
         
-        # --- PARSING AGGRESSIVO E ROBUSTO ---
+        # --- PARSING AGGRESSIVO E ROBUSTO PER GESTIRE IL JSON ---
         
-        # 1. Rimuove eventuali spazi, nuove linee o caratteri invisibili all'inizio/fine
         json_string = raw_text.strip() 
         
-        # 2. Usa un'espressione regolare per trovare il blocco JSON (più robusto di .startswith)
+        # 1. Usa un'espressione regolare per trovare il blocco JSON racchiuso in ```json...```
+        # re.DOTALL permette che il punto (.) corrisponda anche alle newline
         match = re.search(r'```json\s*(\{.*\})\s*```', json_string, re.DOTALL)
         
         if match:
@@ -240,7 +238,7 @@ def summarize_with_gemini(rss_articles, search_queries, status_placeholder):
                 digest_data = json.loads(json_string)
                 return digest_data
             except json.JSONDecodeError as e:
-                # Se entrambi falliscono, lancia un errore con la risposta grezza per debug
+                # Se entrambi falliscono, fornisce la risposta grezza per debug e lancia l'errore
                 st.error(f"❌ FALLIMENTO PARSING: Il modello non ha restituito JSON valido.")
                 st.code(f"RISPOSTA GREZZA DEL MODELLO:\n{raw_text}", language="text")
                 raise json.JSONDecodeError(f"Errore: {e}. Risposta grezza: {raw_text[:200]}...", doc=raw_text, pos=0)
@@ -276,7 +274,7 @@ Il sistema usa la logica **Ibrida Forzata**: legge i feed RSS (base) e chiede a 
 """)
 
 st.info("""
-Lo script finale è ottimizzato per una durata di circa **5 minuti** di parlato e include la riproduzione audio automatica.
+Lo script finale è ottimizzato per una durata di circa **5 minuti** di parlato (max 800 parole).
 """)
 st.markdown("---")
 
@@ -340,7 +338,7 @@ if st.button("▶️ Genera il Radiogiornale Quotidiano", type="primary"):
         
         # Stampa il conteggio delle parole
         word_count = len(script_tts.split())
-        st.markdown(f"*(Lunghezza stimata: **{word_count} parole** — circa {round(word_count / 150, 1)} minuti di parlato)*")
+        st.markdown(f"*(Lunghezza stimata: **{word_count} parole** — Obiettivo: 700-800 parole)*")
         
         # Mostra lo script
         st.text_area(
@@ -353,4 +351,3 @@ if st.button("▶️ Genera il Radiogiornale Quotidiano", type="primary"):
     else:
         # Se final_digest è None, significa che c'è stato un problema nella sintesi o nella raccolta
         pass
-
