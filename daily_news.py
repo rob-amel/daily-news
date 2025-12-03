@@ -171,7 +171,7 @@ def summarize_with_gemini(rss_articles, search_queries, status_placeholder):
     
     sections_list = ", ".join(SECTIONS_MAPPING.keys())
 
-    # CORREZIONE: Stringa multiriga con triple virgolette per risolvere il SyntaxError
+    # Stringa multiriga con triple virgolette e istruzioni vincolanti (Lunghezza, Tempo, JSON)
     system_instruction = f"""
     Sei un giornalista radiofonico professionista, preciso e **MOLTO CONCISO**.
     
@@ -188,6 +188,7 @@ def summarize_with_gemini(rss_articles, search_queries, status_placeholder):
     
     **REQUISITI:**
     * **LUNGHEZZA:** Lo script DEVE rispettare il limite **MASSIMO di 800 parole**.
+    * **VINCOLO JSON CRITICO:** Assicurati che ogni carattere di virgoletta doppia (") all'interno dei valori delle stringhe ("script_tts" e "titolo_digest") sia correttamente *escaped* (ovvero, deve diventare \"). Tutti i caratteri di newline (\n) devono essere rappresentati come \\n.
     * **FORMATO RISPOSTA ASSOLUTO:** La risposta DEVE essere SOLTANTO un oggetto JSON valido racchiuso in un blocco di codice markdown (```json ... ```) e non DEVE contenere alcun testo di preambolo o spiegazione. Le chiavi JSON obbligatorie sono "script_tts" e "titolo_digest".
     """
     
@@ -195,7 +196,6 @@ def summarize_with_gemini(rss_articles, search_queries, status_placeholder):
     
     config = types.GenerateContentConfig(
         system_instruction=system_instruction,
-        # Rimosso response_mime_type/response_schema per evitare errore 400
         tools=[search_tool] 
     )
 
@@ -229,7 +229,7 @@ def summarize_with_gemini(rss_articles, search_queries, status_placeholder):
         
         raw_text = response.text
         
-        # --- PARSING AGGRESSIVO E ROBUSTO PER GESTIRE IL JSON (Fix per delimitatori) ---
+        # --- PARSING AGGRESSIVO E ROBUSTO PER GESTIRE IL JSON (FIX DEFINITIVO) ---
         
         json_string = raw_text.strip() 
         
@@ -237,56 +237,22 @@ def summarize_with_gemini(rss_articles, search_queries, status_placeholder):
         match = re.search(r'```json\s*(\{.*\})\s*```', json_string, re.DOTALL)
         
         if match:
-            # Se trova il blocco, estrae solo il contenuto JSON
+            # Estrae solo il contenuto JSON
             json_string = match.group(1).strip()
         
-        # 2. Tenta di caricare il JSON direttamente (soluzione pulita)
+        # 2. PULIZIA FINALE AGGIUNTIVA: Rimuove newlines e caratteri di controllo che rompono JSON se non scappati
+        json_string = json_string.replace('\n', '')
+        json_string = re.sub(r'[\x00-\x1F\x7F]', '', json_string)
+        
+        # 3. Tenta di caricare il JSON pulito
         try:
             digest_data = json.loads(json_string)
             return digest_data
         except json.JSONDecodeError as e:
-            # Se fallisce, tenta la riparazione
-            status_placeholder.warning(f"⚠️ Errore di decodifica JSON ('{e}'). Tentativo di riparazione...")
-            
-            # --- TENTATIVO DI RIPARAZIONE DELLA STRINGA GREZZA ---
-            
-            # 2a. Sostituisce i backslash singoli non scappati con doppi backslash
-            repaired_json_string = json_string.replace('\\', '\\\\')
-            
-            # 2b. Rimuove i caratteri di controllo non validi (incluse newlines non scappate)
-            repaired_json_string = re.sub(r'[\x00-\x1F\x7F]', '', repaired_json_string)
-
-
-            # 2c. Tenta di risolvere le virgolette doppie non scappate *all'interno* di valori di stringa JSON.
-            def escape_unescaped_quotes(match):
-                # match.group(3) è il testo tra le virgolette del valore
-                if match and match.group(3):
-                    content = match.group(3)
-                    # Scappa tutte le virgolette doppie interne che non sono già scappate
-                    escaped_content = re.sub(r'(?<!\\)"', r'\"', content)
-                    # Sostituisce le newlines con \n
-                    escaped_content = escaped_content.replace('\n', '\\n')
-                    
-                    return f'{match.group(1)}{match.group(2)}{escaped_content}{match.group(4)}'
-                return match.group(0)
-            
-            # Applica l'escaping solo al valore di stringa delle chiavi target.
-            repaired_json_string = re.sub(
-                r'("script_tts"|"titolo_digest")\s*:\s*(")(.*?)(")', 
-                escape_unescaped_quotes, 
-                repaired_json_string, 
-                flags=re.DOTALL
-            )
-                
-            # 3. Ora proviamo a caricare il JSON riparato
-            try:
-                digest_data = json.loads(repaired_json_string)
-                return digest_data
-            except json.JSONDecodeError as e2:
-                 # Se fallisce anche la riparazione, mostriamo l'errore finale
-                status_placeholder.error(f"❌ FALLIMENTO RIPARAZIONE: Il JSON non è valido nemmeno dopo il tentativo di pulizia. Errore finale: {e2}")
-                st.code(f"RISPOSTA GREZZA (ORIGINALE):\n{raw_text}", language="text")
-                return None
+            # Se fallisce, mostriamo l'errore finale e la risposta grezza non riparata.
+            status_placeholder.error(f"❌ FALLIMENTO DECODIFICA JSON: Il modello non ha fornito JSON valido. Errore: {e}")
+            st.code(f"RISPOSTA GREZZA DEL MODELLO (PULITA):\n{json_string}", language="json")
+            return None
 
 
     except APIError as e:
