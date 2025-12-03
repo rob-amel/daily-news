@@ -10,7 +10,7 @@ from google.genai.errors import APIError
 
 # --- CONFIGURAZIONE E STILE ---
 
-st.set_page_config(page_title="📋 Daily News Digest AI", layout="centered")
+st.set_page_config(page_title="🌍 Daily News Digest AI", layout="centered")
 
 # --- RECUPERO CHIAVI API ---
 try:
@@ -222,9 +222,16 @@ def summarize_with_gemini(raw_digest_data):
 
 # --- LOGO E TITOLO ---
 
+# CORREZIONE: Definiamo le colonne per evitare il NameError
+col_icon, col_title = st.columns([0.5, 6.5]) 
+
+with col_icon:
+    # Icona del mondo
+    st.markdown("## 🌍") 
 
 with col_title:
-    st.title("Daily News") # Titolo corretto
+    # Nuovo titolo come richiesto
+    st.title("Daily News") 
 
 st.markdown("---")
 
@@ -317,4 +324,3 @@ if st.button("▶️ Genera il Digest Quotidiano", type="primary"):
         
     else:
         st.error("⚠️ La generazione del digest è fallita. Verifica le chiavi API e prova a generare nuovamente.")
-
