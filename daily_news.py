@@ -276,28 +276,62 @@ if st.button("▶️ Genera il Radiogiornale Quotidiano", type="primary"):
     status_container.empty()
     
     # 3. VISUALIZZAZIONE DEL RISULTATO
-    if final_digest:
-        st.success("✅ Script del radiogiornale generato con successo!")
-        
-        titolo = final_digest.get('titolo_digest', 'Il Tuo Digest Quotidiano')
-        script_tts = final_digest.get('script_tts', 'Errore nella generazione dello script.')
-        
-        st.header(f"🎙️ {titolo}")
-        
-        st.markdown("""
-        ---
-        #### Script Completo per la Sintesi Vocale (TTS)
-        """)
-        
-        # Stampa il conteggio delle parole per una verifica
-        word_count = len(script_tts.split())
-        st.markdown(f"*(Lunghezza stimata: **{word_count} parole** — circa {round(word_count / 150, 1)} minuti di parlato)*")
-        
-        # Mostra lo script
-        st.text_area(
-            "Copia questo script per la riproduzione vocale (Text-to-Speech)", 
-            script_tts, 
-            height=400,
+if final_digest:
+    st.success("✅ Script del radiogiornale generato con successo!")
+
+    titolo = final_digest.get('titolo_digest', 'Il Tuo Digest Quotidiano')
+    script_tts = final_digest.get('script_tts', 'Errore nella generazione dello script.')
+
+    st.header(f"🎙️ {titolo}")
+
+    st.markdown("---")
+
+    # --- BLOCCO AGGIUNTO PER LA RIPRODUZIONE AUDIO ---
+    st.subheader("Ascolta il Digest")
+
+    try:
+        tts = gTTS(
+            text=script_tts, 
+            lang='it', 
+            tld='com', # Usa 'com' o 'it' a seconda della qualità della voce
+            slow=False
         )
-        
-        st.markdown("---")
+
+        # Salvataggio dell'audio in memoria
+        audio_fp = BytesIO()
+        tts.write_to_fp(audio_fp)
+
+        # Reset del puntatore prima di leggere il contenuto
+        audio_fp.seek(0)
+
+        # Widget di riproduzione audio di Streamlit
+        st.audio(audio_fp, format='audio/mp3')
+
+        st.info("Riproduzione automatica avviata. Se non parte, premi play nel widget sopra.")
+
+    except Exception as e:
+        st.error(f"Impossibile generare l'audio: {e}")
+        st.warning("Verifica la connessione internet o i requisiti di gTTS.")
+
+    # --- FINE BLOCCO AUDIO ---
+
+    st.markdown("""
+    ---
+    #### Script Completo (per riferimento)
+    """)
+
+    # Stampa il conteggio delle parole
+    word_count = len(script_tts.split())
+    st.markdown(f"*(Lunghezza stimata: **{word_count} parole** — circa {round(word_count / 150, 1)} minuti di parlato)*")
+
+    # Mostra lo script
+    st.text_area(
+        "Script del radiogiornale", 
+        script_tts, 
+        height=300,
+    )
+
+    st.markdown("---")
+
+else:
+    pass
