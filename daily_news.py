@@ -13,14 +13,17 @@ from io import BytesIO
 st.set_page_config(page_title="🌍 Daily News Digest AI", layout="centered")
 
 # --- RECUPERO CHIAVE GEMINI E INIZIALIZZAZIONE VARIABILI ---
+# Inizializza la variabile a None
+GEMINI_API_KEY = None 
 try:
+    # Accesso diretto alla chiave dai secrets
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 except KeyError:
-    # Se fallisce qui, st.error viene mostrato
-    st.error("⚠️ Chiave GEMINI_API_KEY non trovata nei secrets. L'API di sintesi fallirà.")
+    # Se la chiave non è nei secrets, mostriamo un warning, ma la variabile resta None.
+    st.error("⚠️ KeyError: La chiave GEMINI_API_KEY non è stata trovata nei `secrets` di Streamlit.")
 
 # Inizializzazione della variabile per evitare NameError
-final_digest = None 
+final_digest = None
 
 
 # ----------------------------------------------------------------------
@@ -333,3 +336,4 @@ if st.button("▶️ Genera il Radiogiornale Quotidiano", type="primary"):
     else:
         # Se final_digest è None, significa che c'è stato un problema nella sintesi o nella raccolta
         pass
+
